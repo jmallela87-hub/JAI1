@@ -1,0 +1,26 @@
+async function handleSavePreferences(prefs: {
+  personality: Personality;
+  additional_instructions: string;
+}) {
+  const { data, error } = await supabase
+    .from("preferences")
+    .upsert(
+      {
+        user_id: profile.id,
+        personality: prefs.personality,
+        additional_instructions: prefs.additional_instructions,
+      },
+      {
+        onConflict: "user_id",
+      }
+    )
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Failed to save preferences:", error);
+    throw error;
+  }
+
+  setPreferences(data as Preferences);
+}

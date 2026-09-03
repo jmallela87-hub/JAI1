@@ -26,60 +26,6 @@ type View =
   | "security"
   | "responsePreferences";
 
-
-function compressProfilePhoto(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result !== "string") {
-        reject(new Error("Failed to read photo"));
-        return;
-      }
-
-      image.onload = () => {
-        const maxSize = 400;
-        let width = image.width;
-        let height = image.height;
-
-        if (width > height) {
-          if (width > maxSize) {
-            height = Math.round((height * maxSize) / width);
-            width = maxSize;
-          }
-        } else {
-          if (height > maxSize) {
-            width = Math.round((width * maxSize) / height);
-            height = maxSize;
-          }
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-
-        const context = canvas.getContext("2d");
-
-        if (!context) {
-          reject(new Error("Failed to process photo"));
-          return;
-        }
-
-        context.drawImage(image, 0, 0, width, height);
-
-        resolve(canvas.toDataURL("image/jpeg", 0.8));
-      };
-
-      image.onerror = () => reject(new Error("Failed to process photo"));
-      image.src = reader.result;
-    };
-
-    reader.onerror = () => reject(new Error("Failed to read photo"));
-    reader.readAsDataURL(file);
-  });
-}
-
 interface ProfileOverlayProps {
   profile: Profile;
   memories: Memory[];
@@ -333,14 +279,15 @@ function EditProfileView({
                 return;
               }
 
-              compressProfilePhoto(file)
-                .then((compressed) => {
-                  setAvatarUrl(compressed);
-                })
-                .catch((error) => {
-                  console.error("Photo processing failed:", error);
-                  setPhotoError("Could not process this photo.");
-                });
+              const reader = new FileReader();
+
+              reader.onload = () => {
+                if (typeof reader.result === "string") {
+                  setAvatarUrl(reader.result);
+                }
+              };
+
+              reader.readAsDataURL(file);
             }}
           />
         </div>

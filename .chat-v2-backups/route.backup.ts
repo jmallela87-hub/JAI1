@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { generateAIResponseStream, AIMessage, AIAttachment } from "@/lib/ai/providers";
+import { generateAIResponse, AIMessage, AIAttachment } from "@/lib/ai/providers";
 
 export async function POST(request: Request) {
   try {
@@ -74,6 +74,8 @@ export async function POST(request: Request) {
       user.email
     );
 
+    console.time("[AI API] AI provider total");
+
     const systemMessage: AIMessage = {
       role: "system",
       content: `
@@ -102,63 +104,25 @@ Follow the user's requested tone and preferences when reasonable.
 `.trim(),
     };
 
-    const encoder = new TextEncoder();
+    const result = await generateAIResponse(
+      [systemMessage, ...safeMessages],
+      attachment
+    );
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          const result = await generateAIResponseStream(
-            [systemMessage, ...safeMessages],
-            (chunk) => {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "chunk",
-                    text: chunk,
-                  })}\n\n`
-                )
-              );
-            },
-            attachment
-          );
+    console.timeEnd("[AI API] AI provider total");
 
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                type: "done",
-                provider: result.provider,
-                fallbackUsed: result.fallbackUsed,
-              })}\n\n`
-            )
-          );
+    console.log(
+      "[AI API] Success:",
+      result.provider,
+      "fallback:",
+      result.fallbackUsed
+    );
 
-          controller.close();
-        } catch (error) {
-          console.error("[AI API] Streaming error:", error);
-
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                type: "error",
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "All AI providers are currently unavailable.",
-              })}\n\n`
-            )
-          );
-
-          controller.close();
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      },
+    return NextResponse.json({
+      success: true,
+      answer: result.text,
+      provider: result.provider,
+      fallbackUsed: result.fallbackUsed,
     });
   } catch (error) {
     console.error("[AI API] Error:", error);

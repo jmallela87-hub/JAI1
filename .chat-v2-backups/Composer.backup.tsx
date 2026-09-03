@@ -25,11 +25,8 @@ type SpeechRecognitionInstance = {
   stop: () => void;
   onresult:
     | ((event: {
-        resultIndex: number;
         results: {
-          length: number;
           [index: number]: {
-            isFinal: boolean;
             [index: number]: {
               transcript: string;
             };
