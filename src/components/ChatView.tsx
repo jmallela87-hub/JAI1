@@ -31,7 +31,7 @@ export function ChatView({
           What&rsquo;s on your mind?
         </h1>
         <div className="mt-8 w-full max-w-2xl">
-          <Composer onSend={onSend} />
+          <Composer onSend={onSend} disabled={disabled} />
         </div>
       </div>
     );
@@ -62,7 +62,7 @@ export function ChatView({
         </div>
       </div>
       <div className="mx-auto w-full max-w-2xl px-4 pb-6 sm:px-0">
-        <Composer onSend={onSend} />
+        <Composer onSend={onSend} disabled={disabled} />
       </div>
     </div>
   );

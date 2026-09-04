@@ -360,7 +360,10 @@ export async function generateAIResponseStream(
     while (true) {
       const { done, value } = await reader.read();
 
-      if (done) break;
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
 

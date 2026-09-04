@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -42,6 +42,8 @@ export function Workspace({
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [profileOverlayOpen, setProfileOverlayOpen] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
@@ -66,6 +68,8 @@ export function Workspace({
   }, [activeChatId, supabase]);
 
   async function handleSend(text: string, file?: File) {
+    if (isGenerating) return;
+
     let chatId = activeChatId;
 
     if (!chatId) {
@@ -131,6 +135,21 @@ export function Workspace({
       })
       .eq("id", chatId);
 
+    setIsGenerating(true);
+
+    const temporaryAssistantId = crypto.randomUUID();
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: temporaryAssistantId,
+        chat_id: chatId!,
+        role: "assistant",
+        content: "",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
     try {
       let attachment:
         | {
@@ -172,11 +191,15 @@ export function Workspace({
         };
       }
 
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       const response = await fetch("/api/ai", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        signal: controller.signal,
         body: JSON.stringify({
           messages: updatedMessages.map((message) => ({
             role: message.role,
@@ -186,17 +209,107 @@ export function Workspace({
         }),
       });
 
-      const result = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          result.error || "AI request failed"
-        );
+        let errorMessage = "AI request failed.";
+
+        try {
+          const errorResult = await response.json();
+          errorMessage = errorResult.error || errorMessage;
+        } catch {}
+
+        throw new Error(errorMessage);
       }
 
-      const answer =
-        result.answer ||
-        "I couldn't generate a response.";
+      if (!response.body) {
+        throw new Error("AI response stream is unavailable.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let buffer = "";
+      let answer = "";
+      let streamFinished = false;
+
+      const processEvent = (eventText: string) => {
+        const lines = eventText.split("\n");
+
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+
+          const rawData = line.slice(5).trim();
+          if (!rawData) continue;
+
+          let event: {
+            type?: string;
+            text?: string;
+            error?: string;
+          };
+
+          try {
+            event = JSON.parse(rawData);
+          } catch {
+            continue;
+          }
+
+          if (event.type === "chunk" && event.text) {
+            answer += event.text;
+
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === temporaryAssistantId
+                  ? {
+                      ...message,
+                      content: answer,
+                    }
+                  : message
+              )
+            );
+          }
+
+          if (event.type === "done") {
+            streamFinished = true;
+          }
+
+          if (event.type === "error") {
+            throw new Error(
+              event.error ||
+                "All AI providers are currently unavailable."
+            );
+          }
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          buffer += decoder.decode();
+          break;
+        }
+
+        buffer += decoder.decode(value, {
+          stream: true,
+        });
+
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
+
+        for (const eventText of events) {
+          processEvent(eventText);
+        }
+      }
+
+      if (buffer.trim()) {
+        processEvent(buffer);
+      }
+
+      if (!streamFinished && !answer) {
+        throw new Error("AI returned an empty response.");
+      }
+
+      const finalAnswer =
+        answer || "I couldn't generate a response.";
 
       const {
         data: assistantMessage,
@@ -206,55 +319,22 @@ export function Workspace({
         .insert({
           chat_id: chatId,
           role: "assistant",
-          content: answer,
+          content: finalAnswer,
         })
         .select()
         .single();
 
       if (assistantError || !assistantMessage) {
-        throw new Error(
-          "Failed to save AI response"
-        );
+        throw new Error("Failed to save AI response.");
       }
 
-      const savedAssistantMessage =
-        assistantMessage as Message;
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          ...savedAssistantMessage,
-          content: "",
-        },
-      ]);
-
-      let index = 0;
-
-      const animateResponse = () => {
-        const step = Math.min(
-          2,
-          answer.length - index
-        );
-
-        index += step;
-
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === savedAssistantMessage.id
-              ? {
-                  ...message,
-                  content: answer.slice(0, index),
-                }
-              : message
-          )
-        );
-
-        if (index < answer.length) {
-          window.setTimeout(animateResponse, 18);
-        }
-      };
-
-      animateResponse();
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === temporaryAssistantId
+            ? (assistantMessage as Message)
+            : message
+        )
+      );
 
       await supabase
         .from("chats")
@@ -263,21 +343,31 @@ export function Workspace({
         })
         .eq("id", chatId);
     } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === "AbortError"
+      ) {
+        return;
+      }
+
       console.error("JAI response error:", error);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          chat_id: chatId!,
-          role: "assistant",
-          content:
-            error instanceof Error
-              ? `Sorry, I couldn't respond right now. ${error.message}`
-              : "Sorry, I couldn't respond right now.",
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === temporaryAssistantId
+            ? {
+                ...message,
+                content:
+                  error instanceof Error
+                    ? `Sorry, I couldn't respond right now. ${error.message}`
+                    : "Sorry, I couldn't respond right now.",
+              }
+            : message
+        )
+      );
+    } finally {
+      abortControllerRef.current = null;
+      setIsGenerating(false);
     }
   }
 
@@ -474,6 +564,7 @@ export function Workspace({
           messages={messages}
           onSend={handleSend}
           isNewChat={!activeChatId}
+          disabled={isGenerating}
         />
       </div>
 
