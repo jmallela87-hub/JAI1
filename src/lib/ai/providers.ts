@@ -14,6 +14,17 @@ type ProviderResult = {
   provider: "gemini" | "openrouter";
 };
 
+const GEMINI_COOLDOWN_MS = 60_000;
+let geminiCooldownUntil = 0;
+
+function isGeminiCoolingDown() {
+  return Date.now() < geminiCooldownUntil;
+}
+
+function startGeminiCooldown() {
+  geminiCooldownUntil = Date.now() + GEMINI_COOLDOWN_MS;
+}
+
 function dataUrlToBase64(dataUrl: string) {
   const commaIndex = dataUrl.indexOf(",");
 
@@ -269,7 +280,8 @@ async function callOpenRouter(
 export async function generateAIResponseStream(
   messages: AIMessage[],
   onChunk: (chunk: string) => void,
-  attachment?: AIAttachment
+  attachment?: AIAttachment,
+  signal?: AbortSignal
 ): Promise<{
   provider: "gemini" | "openrouter";
   fallbackUsed: boolean;
@@ -328,6 +340,7 @@ export async function generateAIResponseStream(
           "Content-Type": "application/json",
           "x-goog-api-key": apiKey,
         },
+        signal,
         body: JSON.stringify({
           ...(system
             ? {
@@ -365,7 +378,7 @@ export async function generateAIResponseStream(
         break;
       }
 
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
       const events = buffer.split("\n\n");
       buffer = events.pop() ?? "";
@@ -459,6 +472,7 @@ export async function generateAIResponseStream(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
+        signal,
         body: JSON.stringify({
           model: "openrouter/free",
           messages: openRouterMessages,
@@ -488,7 +502,7 @@ export async function generateAIResponseStream(
 
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
@@ -515,15 +529,35 @@ export async function generateAIResponseStream(
     return "openrouter" as const;
   }
 
-  try {
-    const provider = await streamGemini();
+  if (!isGeminiCoolingDown()) {
+    try {
+      const provider = await streamGemini();
 
-    return {
-      provider,
-      fallbackUsed: false,
-    };
-  } catch (error) {
-    console.error("Gemini streaming failed:", error);
+      return {
+        provider,
+        fallbackUsed: false,
+      };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+
+      const message =
+        error instanceof Error ? error.message : String(error);
+
+      console.error("Gemini streaming failed:", error);
+
+      if (message.includes("429")) {
+        startGeminiCooldown();
+        console.warn(
+          "Gemini rate limit reached. Using OpenRouter for the next 60 seconds."
+        );
+      }
+    }
+  } else {
+    console.log(
+      "Gemini is temporarily cooling down. Using OpenRouter."
+    );
   }
 
   try {
@@ -534,6 +568,10 @@ export async function generateAIResponseStream(
       fallbackUsed: true,
     };
   } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+
     console.error("OpenRouter streaming failed:", error);
   }
 

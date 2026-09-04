@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -29,7 +29,7 @@ export function Workspace({
   initialMemories,
   initialPreferences,
 }: WorkspaceProps) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
 
   const [profile, setProfile] = useState(initialProfile);
@@ -65,7 +65,7 @@ export function Workspace({
       .then(({ data }) => {
         setMessages((data ?? []) as Message[]);
       });
-  }, [activeChatId, supabase]);
+  }, [activeChatId]);
 
   async function handleSend(text: string, file?: File) {
     if (isGenerating) return;
@@ -288,9 +288,10 @@ export function Workspace({
           break;
         }
 
-        buffer += decoder.decode(value, {
-          stream: true,
-        });
+        buffer += decoder
+          .decode(value, { stream: true })
+          .replace(/\r\n/g, "\n")
+          .replace(/\r/g, "\n");
 
         const events = buffer.split("\n\n");
         buffer = events.pop() || "";

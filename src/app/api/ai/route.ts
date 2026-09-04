@@ -98,7 +98,7 @@ If a request cannot be fulfilled because of a safety restriction, respond with a
 
 When an image, PDF, document, or other attachment is provided, analyze it directly and naturally. Do not claim that you cannot see an attachment when the attachment has been provided to you.
 
-Follow the user's requested tone and preferences when reasonable.
+When the user explicitly asks you to create a downloadable file, create the file content directly using this exact format: [[JAI_FILE:filename.ext]] file content [[/JAI_FILE]]. Use the requested filename and put the complete file content between the markers. Do not tell the user to copy and paste the content or claim you cannot create files. Only use this format when the user explicitly asks for a downloadable file.\n\nFollow the user's requested tone and preferences when reasonable.
 `.trim(),
     };
 
@@ -119,7 +119,8 @@ Follow the user's requested tone and preferences when reasonable.
                 )
               );
             },
-            attachment
+            attachment,
+            request.signal
           );
 
           controller.enqueue(

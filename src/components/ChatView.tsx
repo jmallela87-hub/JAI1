@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { Message } from "@/lib/types";
 import { Composer } from "@/components/Composer";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 interface ChatViewProps {
   messages: Message[];
   onSend: (text: string, file?: File) => void;
+  onStop?: () => void;
   isNewChat: boolean;
   disabled?: boolean;
 }
@@ -15,14 +16,19 @@ interface ChatViewProps {
 export function ChatView({
   messages,
   onSend,
+  onStop,
   isNewChat,
   disabled,
 }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length]);
+    const frame = requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [messages]);
 
   if (isNewChat) {
     return (
@@ -31,7 +37,11 @@ export function ChatView({
           What&rsquo;s on your mind?
         </h1>
         <div className="mt-8 w-full max-w-2xl">
-          <Composer onSend={onSend} disabled={disabled} />
+          <Composer
+            onSend={onSend}
+            onStop={onStop}
+            disabled={disabled}
+          />
         </div>
       </div>
     );
@@ -62,31 +72,62 @@ export function ChatView({
         </div>
       </div>
       <div className="mx-auto w-full max-w-2xl px-4 pb-6 sm:px-0">
-        <Composer onSend={onSend} disabled={disabled} />
+        <Composer
+          onSend={onSend}
+          onStop={onStop}
+          disabled={disabled}
+        />
       </div>
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function downloadJAIFile(name: string, content: string) { const blob = new Blob([content], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+
+const MessageBubble = memo(function MessageBubble({ message }: { message: Message }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
+
+  const fileMatch = message.content.match(
+    /\[\[JAI_FILE:([^\]]+)\]\]([\s\S]*?)\[\[\/JAI_FILE\]\]/
+  );
+
+  const fileName = fileMatch?.[1]?.trim();
+  const fileContent = fileMatch?.[2]?.trim();
+
+  const displayContent = fileMatch
+    ? message.content.replace(fileMatch[0], "").trim()
+    : message.content;
 
   return (
     <div
       className={cn("group flex flex-col", isUser ? "items-end" : "items-start")}
     >
-      <div
-        className={cn(
-          "max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
-          isUser ? "bg-accent-gradient text-white" : "bg-surface text-text"
-        )}
-      >
-        {message.content}
-      </div>
+      {displayContent && (
+        <div
+          className={cn(
+            "max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+            isUser ? "bg-accent-gradient text-white" : "bg-surface text-text"
+          )}
+        >
+          {displayContent}
+        </div>
+      )}
+
+      {fileName && fileContent && (
+        <button
+          onClick={() => downloadJAIFile(fileName, fileContent)}
+          className="mt-2 flex items-center gap-2 rounded-xl bg-surface px-4 py-2.5 text-sm text-text transition hover:opacity-80"
+        >
+          <span>📄</span>
+          <span>{fileName}</span>
+          <span className="text-text-muted">↓ Download</span>
+        </button>
+      )}
+
       <button
         onClick={() => {
-          navigator.clipboard.writeText(message.content);
+          navigator.clipboard.writeText(displayContent);
           setCopied(true);
           setTimeout(() => setCopied(false), 1200);
         }}
@@ -96,4 +137,4 @@ function MessageBubble({ message }: { message: Message }) {
       </button>
     </div>
   );
-}
+});

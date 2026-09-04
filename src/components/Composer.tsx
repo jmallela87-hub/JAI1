@@ -13,6 +13,7 @@ import {
 
 interface ComposerProps {
   onSend: (text: string, file?: File) => void;
+  onStop?: () => void;
   disabled?: boolean;
 }
 
@@ -54,6 +55,7 @@ declare global {
 
 export function Composer({
   onSend,
+  onStop,
   disabled,
 }: ComposerProps) {
   const [value, setValue] = useState("");
@@ -333,22 +335,29 @@ export function Composer({
           />
         </button>
 
-        <button
-          onClick={handleSend}
-          disabled={
-            (!value.trim() &&
-              !selectedFile) ||
-            disabled
-          }
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-gradient text-white disabled:opacity-40"
-          aria-label="Send"
-          type="button"
-        >
-          <SendIcon
-            width={16}
-            height={16}
-          />
-        </button>
+        {disabled ? (
+          <button
+            onClick={onStop}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity hover:opacity-80"
+            aria-label="Stop generating"
+            type="button"
+          >
+            <span className="h-3.5 w-3.5 rounded-[3px] bg-bg" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={!value.trim() && !selectedFile}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-gradient text-white disabled:opacity-40"
+            aria-label="Send"
+            type="button"
+          >
+            <SendIcon
+              width={16}
+              height={16}
+            />
+          </button>
+        )}
       </div>
     </div>
   );
