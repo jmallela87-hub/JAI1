@@ -25,6 +25,11 @@ export interface Message {
   role: MessageRole;
   content: string;
   created_at: string;
+  attachments?: {
+    name: string;
+    type: string;
+    data: string;
+  }[];
 }
 
 export interface Memory {

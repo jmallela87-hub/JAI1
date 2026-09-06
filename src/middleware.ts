@@ -15,46 +15,35 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            request.cookies.set(name, value)
-          );
+
+        setAll(
+          cookiesToSet: {
+            name: string;
+            value: string;
+            options?: Record<string, unknown>;
+          }[]
+        ) {
+          cookiesToSet.forEach(({ name, value }) => {
+            request.cookies.set(name, value);
+          });
 
           response = NextResponse.next({
             request,
           });
 
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
         },
       },
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
-
-  const isAppRoute = pathname.startsWith("/app");
-  const isAuthRoute =
-    pathname.startsWith("/login") || pathname.startsWith("/signup");
-
-  // Login/signup -> app when already authenticated
-  if (isAuthRoute && user) {
-    return NextResponse.redirect(new URL("/app", request.url));
-  }
-
-  // App -> login only when NOT authenticated
-  if (isAppRoute && !user) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
+  await supabase.auth.getSession();
 
   return response;
 }
 
 export const config = {
-  matcher: ["/app/:path*", "/login", "/signup"],
+  matcher: ["/app/:path*"],
 };

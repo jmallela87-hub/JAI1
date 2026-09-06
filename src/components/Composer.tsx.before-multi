@@ -13,10 +13,9 @@ import {
 } from "@/components/ui/Icons";
 
 interface ComposerProps {
-  onSend: (text: string, files?: File[]) => void;
+  onSend: (text: string, file?: File) => void;
   onStop?: () => void;
   disabled?: boolean;
-  isGenerating?: boolean;
 }
 
 type SpeechRecognitionInstance = {
@@ -59,15 +58,12 @@ export function Composer({
   onSend,
   onStop,
   disabled,
-  isGenerating = false,
 }: ComposerProps) {
   const [value, setValue] = useState("");
-  const [selectedFiles, setSelectedFiles] =
-    useState<File[]>([]);
+  const [selectedFile, setSelectedFile] =
+    useState<File | null>(null);
   const [previewUrl, setPreviewUrl] =
     useState<string | null>(null);
-  const [previewFile, setPreviewFile] =
-    useState<File | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] =
     useState(false);
   const [listening, setListening] = useState(false);
@@ -84,34 +80,29 @@ export function Composer({
   const voiceFinalRef = useRef("");
 
   useEffect(() => {
-    if (!previewFile || !previewFile.type.startsWith("image/")) {
+    if (!selectedFile || !selectedFile.type.startsWith("image/")) {
       setPreviewUrl(null);
       return;
     }
 
-    const url = URL.createObjectURL(previewFile);
+    const url = URL.createObjectURL(selectedFile);
     setPreviewUrl(url);
 
     return () => {
       URL.revokeObjectURL(url);
     };
-  }, [previewFile]);
+  }, [selectedFile]);
 
   function handleSend() {
     const trimmed = value.trim();
 
-    if (!trimmed && selectedFiles.length === 0) return;
+    if (!trimmed && !selectedFile) return;
     if (disabled) return;
 
-    onSend(
-      trimmed,
-      selectedFiles.length > 0 ? selectedFiles : undefined
-    );
+    onSend(trimmed, selectedFile ?? undefined);
 
     setValue("");
-    setSelectedFiles([]);
-    setPreviewFile(null);
-    setIsPreviewOpen(false);
+    setSelectedFile(null);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -141,19 +132,15 @@ export function Composer({
   function handleFileChange(
     e: React.ChangeEvent<HTMLInputElement>
   ) {
-    const files = Array.from(e.target.files ?? []);
+    const file = e.target.files?.[0];
 
-    if (files.length === 0) return;
+    if (!file) return;
 
     const maxSize = 15 * 1024 * 1024;
 
-    const oversizedFile = files.find(
-      (file) => file.size > maxSize
-    );
-
-    if (oversizedFile) {
+    if (file.size > maxSize) {
       setVoiceError(
-        `"${oversizedFile.name}" is too large. Maximum size is 15 MB per file.`
+        "File is too large. Maximum size is 15 MB."
       );
 
       e.target.value = "";
@@ -161,13 +148,7 @@ export function Composer({
     }
 
     setVoiceError(null);
-
-    setSelectedFiles((prev) => [
-      ...prev,
-      ...files,
-    ]);
-
-    e.target.value = "";
+    setSelectedFile(file);
   }
 
   function toggleVoice() {
@@ -284,64 +265,45 @@ export function Composer({
 
   return (
     <div className="w-full">
-      {selectedFiles.length > 0 && (
-        <div className="mb-2 flex max-w-full items-center justify-end gap-2 overflow-x-auto px-1 py-1">
-          {selectedFiles.map((file, index) => {
-            const isImage = file.type.startsWith("image/");
+      {selectedFile && (
+        <div className="mb-2 flex w-fit max-w-full items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text">
+          {previewUrl ? (
+            <button
+              type="button"
+              onClick={() => setIsPreviewOpen(true)}
+              className="shrink-0 overflow-hidden rounded-lg"
+              aria-label="Preview image"
+            >
+              <img
+                src={previewUrl}
+                alt={selectedFile?.name ?? "Image preview"}
+                className="h-12 w-12 object-cover"
+              />
+            </button>
+          ) : (
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-surface-hover">
+              <PaperclipIcon width={18} height={18} />
+            </div>
+          )}
 
-            return (
-              <div
-                key={`${file.name}-${file.lastModified}-${index}`}
-                className="group relative shrink-0"
-              >
-                {isImage ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPreviewFile(file);
-                      setIsPreviewOpen(true);
-                    }}
-                    className="block overflow-hidden rounded-xl border border-border bg-surface transition hover:opacity-90"
-                    aria-label={`Preview ${file.name}`}
-                  >
-                    <img
-                      src={URL.createObjectURL(file)}
-                      alt={file.name}
-                      className="h-16 w-16 object-cover"
-                      onLoad={(e) => {
-                        URL.revokeObjectURL(e.currentTarget.src);
-                      }}
-                    />
-                  </button>
-                ) : (
-                  <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-border bg-surface text-text-muted">
-                    <PaperclipIcon
-                      width={20}
-                      height={20}
-                    />
-                  </div>
-                )}
+          <div className="flex-1" />
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedFiles((prev) =>
-                      prev.filter((_, i) => i !== index)
-                    );
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedFile(null);
+              setIsPreviewOpen(false);
 
-                    if (previewFile === file) {
-                      setPreviewFile(null);
-                      setIsPreviewOpen(false);
-                    }
-                  }}
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/80 text-xs text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100"
-                  aria-label={`Remove ${file.name}`}
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
+              if (fileInputRef.current) {
+                fileInputRef.current.value =
+                  "";
+              }
+            }}
+            className="text-text-muted hover:text-danger"
+            aria-label="Remove attachment"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -364,7 +326,7 @@ export function Composer({
 
           <img
             src={previewUrl}
-            alt={previewFile?.name ?? "Image preview"}
+            alt={selectedFile?.name ?? "Image preview"}
             className="max-h-[90vh] max-w-[95vw] rounded-xl object-contain shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
@@ -385,7 +347,7 @@ export function Composer({
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-muted hover:bg-surface-hover hover:text-text"
           aria-label="Attach a file or image"
           type="button"
-          disabled={false}
+          disabled={disabled}
         >
           <PaperclipIcon
             width={17}
@@ -397,7 +359,7 @@ export function Composer({
           ref={fileInputRef}
           type="file"
           className="hidden"
-          multiple
+          multiple={false}
           accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.jsx,.ts,.tsx,.css,.html"
           onChange={handleFileChange}
         />
@@ -414,7 +376,7 @@ export function Composer({
               : "Ask anything..."
           }
           rows={1}
-          disabled={false}
+          disabled={disabled}
           className="max-h-40 flex-1 resize-none bg-transparent py-2 text-[15px] text-text placeholder:text-text-faint focus:outline-none disabled:opacity-50"
         />
 
@@ -431,7 +393,7 @@ export function Composer({
               : "Voice input"
           }
           type="button"
-          disabled={false}
+          disabled={disabled}
         >
           <MicIcon
             width={17}
@@ -439,7 +401,7 @@ export function Composer({
           />
         </button>
 
-        {isGenerating && (
+        {disabled ? (
           <button
             onClick={onStop}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity hover:opacity-80"
@@ -448,20 +410,20 @@ export function Composer({
           >
             <span className="h-3.5 w-3.5 rounded-[3px] bg-bg" />
           </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={!value.trim() && !selectedFile}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-gradient text-white disabled:opacity-40"
+            aria-label="Send"
+            type="button"
+          >
+            <SendIcon
+              width={16}
+              height={16}
+            />
+          </button>
         )}
-
-        <button
-          onClick={handleSend}
-          disabled={!value.trim() && selectedFiles.length === 0}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-gradient text-white disabled:opacity-40"
-          aria-label="Send"
-          type="button"
-        >
-          <SendIcon
-            width={16}
-            height={16}
-          />
-        </button>
       </div>
     </div>
   );

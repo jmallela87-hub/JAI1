@@ -43,15 +43,8 @@ export function Workspace({
   const [messages, setMessages] = useState<Message[]>([]);
   const skipNextMessageLoadRef = useRef(false);
   const [profileOverlayOpen, setProfileOverlayOpen] = useState(false);
-  const [generatingChatIds, setGeneratingChatIds] = useState<Set<string>>(
-    new Set()
-  );
-  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
-  const activeChatIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    activeChatIdRef.current = activeChatId;
-  }, [activeChatId]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
@@ -80,25 +73,10 @@ export function Workspace({
       });
   }, [activeChatId, supabase]);
 
-  async function handleSend(
-    text: string,
-    files?: File[]
-  ) {
-    const trimmedText = text.trim();
+  async function handleSend(text: string, files?: File[]) {
+    if (isGenerating) return;
 
-    let memoryToSave: string | null = null;
-
-    const rememberMatch = trimmedText.match(
-      /^(?:please\s+)?remember(?:\s+(?:that|this))?\s*[:,-]?\s+(.+)$/i
-    );
-
-    if (rememberMatch?.[1]) {
-      const candidate = rememberMatch[1].trim();
-
-      if (!/^(?:it|this|that)$/i.test(candidate)) {
-        memoryToSave = candidate;
-      }
-    }
+    setIsGenerating(true);
 
     let chatId = activeChatId;
 
@@ -116,6 +94,7 @@ export function Workspace({
 
       if (error || !newChat) {
         console.error("Failed to create chat:", error);
+        setIsGenerating(false);
         return;
       }
 
@@ -123,10 +102,6 @@ export function Workspace({
       setChats((prev) => [newChat as Chat, ...prev]);
       skipNextMessageLoadRef.current = true;
       setActiveChatId(chatId);
-    }
-
-    if (memoryToSave) {
-      await handleSaveMemory(memoryToSave);
     }
 
     let attachments:
@@ -249,12 +224,7 @@ export function Workspace({
 
     try {
       const controller = new AbortController();
-      abortControllersRef.current.set(chatId!, controller);
-      setGeneratingChatIds((prev) => {
-        const next = new Set(prev);
-        next.add(chatId!);
-        return next;
-      });
+      abortControllerRef.current = controller;
 
       const response = await fetch("/api/ai", {
         method: "POST",
@@ -317,18 +287,16 @@ export function Workspace({
           if (event.type === "chunk" && event.text) {
             answer += event.text;
 
-            if (activeChatIdRef.current === chatId) {
-              setMessages((prev) =>
-                prev.map((message) =>
-                  message.id === temporaryAssistantId
-                    ? {
-                        ...message,
-                        content: answer,
-                      }
-                    : message
-                )
-              );
-            }
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === temporaryAssistantId
+                  ? {
+                      ...message,
+                      content: answer,
+                    }
+                  : message
+              )
+            );
           }
 
           if (event.type === "done") {
@@ -393,15 +361,13 @@ export function Workspace({
         throw new Error("Failed to save AI response.");
       }
 
-      if (activeChatIdRef.current === chatId) {
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === temporaryAssistantId
-              ? (assistantMessage as Message)
-              : message
-          )
-        );
-      }
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === temporaryAssistantId
+            ? (assistantMessage as Message)
+            : message
+        )
+      );
 
       void supabase
         .from("chats")
@@ -419,38 +385,22 @@ export function Workspace({
 
       console.error("JAI response error:", error);
 
-      if (activeChatIdRef.current === chatId) {
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === temporaryAssistantId
-              ? {
-                  ...message,
-                  content:
-                    error instanceof Error
-                      ? `Sorry, I couldn't respond right now. ${error.message}`
-                      : "Sorry, I couldn't respond right now.",
-                }
-              : message
-          )
-        );
-      }
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === temporaryAssistantId
+            ? {
+                ...message,
+                content:
+                  error instanceof Error
+                    ? `Sorry, I couldn't respond right now. ${error.message}`
+                    : "Sorry, I couldn't respond right now.",
+              }
+            : message
+        )
+      );
     } finally {
-      abortControllersRef.current.delete(chatId!);
-      setGeneratingChatIds((prev) => {
-        const next = new Set(prev);
-        next.delete(chatId!);
-        return next;
-      });
-    }
-  }
-
-  function handleStop() {
-    if (!activeChatId) return;
-
-    const controller = abortControllersRef.current.get(activeChatId);
-
-    if (controller) {
-      controller.abort();
+      abortControllerRef.current = null;
+      setIsGenerating(false);
     }
   }
 
@@ -504,50 +454,6 @@ export function Workspace({
     }
 
     setProfile(data as Profile);
-  }
-
-  async function handleSaveMemory(content: string) {
-    const cleanContent = content.trim();
-
-    if (!cleanContent) return;
-
-    const { data: existing, error: existingError } = await supabase
-      .from("memories")
-      .select("*")
-      .eq("user_id", profile.id)
-      .eq("content", cleanContent)
-      .maybeSingle();
-
-    if (existingError) {
-      console.error("Failed to check existing memory:", existingError);
-      return;
-    }
-
-    if (existing) {
-      setMemories((prev) =>
-        prev.some((memory) => memory.id === existing.id)
-          ? prev
-          : [existing as Memory, ...prev]
-      );
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("memories")
-      .insert({
-        user_id: profile.id,
-        content: cleanContent,
-      })
-      .select()
-      .single();
-
-    if (error || !data) {
-      console.error("Failed to save memory:", error);
-      return;
-    }
-
-    setMemories((prev) => [data as Memory, ...prev]);
-    console.log("Memory saved:", cleanContent);
   }
 
   async function handleDeleteMemory(id: string) {
@@ -690,15 +596,8 @@ export function Workspace({
         <ChatView
           messages={messages}
           onSend={handleSend}
-          onStop={handleStop}
           isNewChat={!activeChatId}
-          disabled={false}
-          isGenerating={
-            activeChatId
-              ? generatingChatIds.has(activeChatId)
-              : false
-          }
-
+          disabled={isGenerating}
         />
       </div>
 

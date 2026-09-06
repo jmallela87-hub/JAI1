@@ -45,7 +45,7 @@ function isPdf(type: string) {
 
 async function callGemini(
   messages: AIMessage[],
-  attachments?: AIAttachment[]
+  attachment?: AIAttachment
 ): Promise<ProviderResult> {
   const apiKey =
     process.env.GEMINI_API_KEY;
@@ -84,22 +84,20 @@ async function callGemini(
         },
       ];
 
-      if (isLast && attachments?.length) {
-        for (const attachment of attachments) {
-          if (
-            isImage(attachment.type) ||
-            isPdf(attachment.type)
-          ) {
-            parts.push({
-              inlineData: {
-                mimeType: attachment.type,
-                data: dataUrlToBase64(
-                  attachment.data
-                ),
-              },
-            });
-          }
-        }
+      if (
+        isLast &&
+        attachment &&
+        (isImage(attachment.type) ||
+          isPdf(attachment.type))
+      ) {
+        parts.push({
+          inlineData: {
+            mimeType: attachment.type,
+            data: dataUrlToBase64(
+              attachment.data
+            ),
+          },
+        });
       }
 
       return {
@@ -169,7 +167,7 @@ async function callGemini(
 
 async function callOpenRouter(
   messages: AIMessage[],
-  attachments?: AIAttachment[]
+  attachment?: AIAttachment
 ): Promise<ProviderResult> {
   const apiKey =
     process.env.OPENROUTER_API_KEY;
@@ -187,41 +185,49 @@ async function callOpenRouter(
 
       if (
         !isLast ||
-        !attachments?.length
+        !attachment
       ) {
         return message;
       }
 
-      const content: Array<Record<string, unknown>> = [
-        {
-          type: "text",
-          text: message.content,
-        },
-      ];
-
-      for (const attachment of attachments) {
-        if (isImage(attachment.type)) {
-          content.push({
-            type: "image_url",
-            image_url: {
-              url: attachment.data,
+      if (isImage(attachment.type)) {
+        return {
+          role: message.role,
+          content: [
+            {
+              type: "text",
+              text: message.content,
             },
-          });
-        } else if (isPdf(attachment.type)) {
-          content.push({
-            type: "file",
-            file: {
-              filename: attachment.name,
-              file_data: attachment.data,
+            {
+              type: "image_url",
+              image_url: {
+                url: attachment.data,
+              },
             },
-          });
-        }
+          ],
+        };
       }
 
-      return {
-        role: message.role,
-        content,
-      };
+      if (isPdf(attachment.type)) {
+        return {
+          role: message.role,
+          content: [
+            {
+              type: "text",
+              text: message.content,
+            },
+            {
+              type: "file",
+              file: {
+                filename: attachment.name,
+                file_data: attachment.data,
+              },
+            },
+          ],
+        };
+      }
+
+      return message;
     });
 
   const response = await fetch(
@@ -233,30 +239,9 @@ async function callOpenRouter(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        models: [
-          "z-ai/glm-5.3-flash",
-          "openai/gpt-5.6-luna",
-          "deepseek/deepseek-v4-flash",
-        ],
-        provider: {
-          sort: "latency",
-          allow_fallbacks: true,
-        },
+        model: "openrouter/free",
         messages: openRouterMessages,
-        ...(attachments?.some((attachment) => isPdf(attachment.type))
-          ? {
-              plugins: [
-                {
-                  id: "file-parser",
-                  pdf: {
-                    engine: "cloudflare-ai",
-                  },
-                },
-              ],
-            }
-          : {}),
         temperature: 0.2,
-        max_tokens: 700,
       }),
     }
   );
@@ -295,7 +280,7 @@ async function callOpenRouter(
 export async function generateAIResponseStream(
   messages: AIMessage[],
   onChunk: (chunk: string) => void,
-  attachments?: AIAttachment[],
+  attachment?: AIAttachment,
   signal?: AbortSignal
 ): Promise<{
   provider: "gemini" | "openrouter";
@@ -328,20 +313,17 @@ export async function generateAIResponseStream(
           }
       > = [{ text: m.content }];
 
-      if (isLast && attachments?.length) {
-        for (const attachment of attachments) {
-          if (
-            isImage(attachment.type) ||
-            isPdf(attachment.type)
-          ) {
-            parts.push({
-              inlineData: {
-                mimeType: attachment.type,
-                data: dataUrlToBase64(attachment.data),
-              },
-            });
-          }
-        }
+      if (
+        isLast &&
+        attachment &&
+        (isImage(attachment.type) || isPdf(attachment.type))
+      ) {
+        parts.push({
+          inlineData: {
+            mimeType: attachment.type,
+            data: dataUrlToBase64(attachment.data),
+          },
+        });
       }
 
       return {
@@ -359,23 +341,8 @@ export async function generateAIResponseStream(
           "x-goog-api-key": apiKey,
         },
         signal: signal
-          ? AbortSignal.any([
-              signal,
-              AbortSignal.timeout(
-                attachments?.some((attachment) => isPdf(attachment.type))
-                  ? 15000
-                  : attachments?.some((attachment) => isImage(attachment.type))
-                    ? 8000
-                    : 4000
-              ),
-            ])
-          : AbortSignal.timeout(
-              attachments?.some((attachment) => isPdf(attachment.type))
-                ? 15000
-                : attachments?.some((attachment) => isImage(attachment.type))
-                  ? 8000
-                  : 4000
-            ),
+          ? AbortSignal.any([signal, AbortSignal.timeout(8000)])
+          : AbortSignal.timeout(8000),
         body: JSON.stringify({
           ...(system
             ? {
@@ -385,11 +352,6 @@ export async function generateAIResponseStream(
               }
             : {}),
           contents,
-          generationConfig: {
-            temperature: 0.65,
-            topP: 0.9,
-            maxOutputTokens: 4096,
-          },
         }),
       }
     );
@@ -462,191 +424,144 @@ export async function generateAIResponseStream(
     const openRouterMessages = messages.map((message, index) => {
       const isLast = index === messages.length - 1;
 
-      if (!isLast || !attachments?.length) {
-        return message;
+      if (!isLast || !attachment) return message;
+
+      if (isImage(attachment.type)) {
+        return {
+          role: message.role,
+          content: [
+            {
+              type: "text",
+              text: message.content,
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: attachment.data,
+              },
+            },
+          ],
+        };
       }
 
-      const content: Array<Record<string, unknown>> = [
-        {
-          type: "text",
-          text: message.content,
-        },
-      ];
-
-      for (const attachment of attachments) {
-        if (isImage(attachment.type)) {
-          content.push({
-            type: "image_url",
-            image_url: {
-              url: attachment.data,
+      if (isPdf(attachment.type)) {
+        return {
+          role: message.role,
+          content: [
+            {
+              type: "text",
+              text: message.content,
             },
-          });
-        } else if (isPdf(attachment.type)) {
-          content.push({
-            type: "file",
-            file: {
-              filename: attachment.name,
-              file_data: attachment.data,
+            {
+              type: "file",
+              file: {
+                filename: attachment.name,
+                file_data: attachment.data,
+              },
             },
-          });
-        }
+          ],
+        };
       }
 
-      return {
-        role: message.role,
-        content,
-      };
+      return message;
     });
 
-    const models = [
-      "z-ai/glm-5.3-flash",
-      "openai/gpt-5.6-luna",
-      "deepseek/deepseek-v4-flash",
-    ];
+    const response = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        signal,
+        body: JSON.stringify({
+          model: "openrouter/free",
+          messages: openRouterMessages,
+          stream: true,
+        }),
+      }
+    );
 
-    let lastError: Error | null = null;
+    if (!response.ok || !response.body) {
+      const errorText = await response.text();
 
-    for (const model of models) {
-      try {
-        console.log(`[OpenRouter] Trying model: ${model}`);
+      throw new Error(
+        `OpenRouter streaming failed: ${response.status} ${errorText.slice(
+          0,
+          300
+        )}`
+      );
+    }
 
-        const requestSignal = signal
-          ? AbortSignal.any([
-              signal,
-              AbortSignal.timeout(7000),
-            ])
-          : AbortSignal.timeout(7000);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
 
-        const response = await fetch(
-          "https://openrouter.ai/api/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
-            signal: requestSignal,
-            body: JSON.stringify({
-              model,
-              messages: openRouterMessages,
-              stream: true,
-              temperature: 0.2,
-              max_tokens: 8192,
-              ...(attachments?.some((attachment) =>
-                isPdf(attachment.type)
-              )
-                ? {
-                    plugins: [
-                      {
-                        id: "file-parser",
-                        pdf: {
-                          engine: "cloudflare-ai",
-                        },
-                      },
-                    ],
-                  }
-                : {}),
-            }),
-          }
-        );
+    let buffer = "";
 
-        if (!response.ok || !response.body) {
-          const errorText = await response.text();
+    while (true) {
+      const { done, value } = await reader.read();
 
-          throw new Error(
-            `OpenRouter ${model} failed: ${response.status} ${errorText.slice(
-              0,
-              500
-            )}`
-          );
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+
+        const jsonText = line.slice(5).trim();
+
+        if (!jsonText || jsonText === "[DONE]") continue;
+
+        try {
+          const data = JSON.parse(jsonText);
+          const text =
+            data?.choices?.[0]?.delta?.content ?? "";
+
+          if (text) onChunk(text);
+        } catch {
+          // Ignore malformed/incomplete SSE chunks.
         }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) break;
-
-          buffer += decoder
-            .decode(value, { stream: true })
-            .replace(/\r\n/g, "\n")
-            .replace(/\r/g, "\n");
-
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data:")) continue;
-
-            const jsonText = line.slice(5).trim();
-
-            if (!jsonText || jsonText === "[DONE]") {
-              continue;
-            }
-
-            try {
-              const data = JSON.parse(jsonText);
-
-              const text =
-                data?.choices?.[0]?.delta?.content ?? "";
-
-              if (text) {
-                onChunk(text);
-              }
-            } catch {
-              // Ignore malformed/incomplete SSE chunks.
-            }
-          }
-        }
-
-        console.log(`[OpenRouter] Success: ${model}`);
-
-        return "openrouter" as const;
-      } catch (error) {
-        if (signal?.aborted) {
-          throw error;
-        }
-
-        lastError =
-          error instanceof Error
-            ? error
-            : new Error(String(error));
-
-        console.error(
-          `[OpenRouter] ${model} failed:`,
-          lastError.message
-        );
       }
     }
 
-    throw (
-      lastError ??
-      new Error("All OpenRouter models are unavailable")
+    return "openrouter" as const;
+  }
+
+  if (!isGeminiCoolingDown()) {
+    try {
+      const provider = await streamGemini();
+
+      return {
+        provider,
+        fallbackUsed: false,
+      };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+
+      const message =
+        error instanceof Error ? error.message : String(error);
+
+      console.error("Gemini streaming failed:", error);
+
+      if (message.includes("429")) {
+        startGeminiCooldown();
+        console.warn(
+          "Gemini rate limit reached. Using OpenRouter for the next 60 seconds."
+        );
+      }
+    }
+  } else {
+    console.log(
+      "Gemini is temporarily cooling down. Using OpenRouter."
     );
   }
 
-  // PRIMARY: Always try Gemini first.
-  // Only fall back to OpenRouter when Gemini actually fails.
-  try {
-    const provider = await streamGemini();
-
-    return {
-      provider,
-      fallbackUsed: false,
-    };
-  } catch (error) {
-    if (signal?.aborted) {
-      throw error;
-    }
-
-    console.error("Gemini streaming failed. Falling back to OpenRouter:", error);
-  }
-
-  // FALLBACK: OpenRouter is used only after Gemini fails.
   try {
     const provider = await streamOpenRouter();
 
@@ -667,7 +582,7 @@ export async function generateAIResponseStream(
 
 export async function generateAIResponse(
   messages: AIMessage[],
-  attachments?: AIAttachment[]
+  attachment?: AIAttachment
 ): Promise<
   ProviderResult & {
     fallbackUsed: boolean;
@@ -677,7 +592,7 @@ export async function generateAIResponse(
     const result =
       await callGemini(
         messages,
-        attachments
+        attachment
       );
 
     return {
@@ -695,7 +610,7 @@ export async function generateAIResponse(
     const result =
       await callOpenRouter(
         messages,
-        attachments
+        attachment
       );
 
     return {

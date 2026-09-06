@@ -16,7 +16,6 @@ interface ComposerProps {
   onSend: (text: string, files?: File[]) => void;
   onStop?: () => void;
   disabled?: boolean;
-  isGenerating?: boolean;
 }
 
 type SpeechRecognitionInstance = {
@@ -59,7 +58,6 @@ export function Composer({
   onSend,
   onStop,
   disabled,
-  isGenerating = false,
 }: ComposerProps) {
   const [value, setValue] = useState("");
   const [selectedFiles, setSelectedFiles] =
@@ -385,7 +383,7 @@ export function Composer({
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-muted hover:bg-surface-hover hover:text-text"
           aria-label="Attach a file or image"
           type="button"
-          disabled={false}
+          disabled={disabled}
         >
           <PaperclipIcon
             width={17}
@@ -414,7 +412,7 @@ export function Composer({
               : "Ask anything..."
           }
           rows={1}
-          disabled={false}
+          disabled={disabled}
           className="max-h-40 flex-1 resize-none bg-transparent py-2 text-[15px] text-text placeholder:text-text-faint focus:outline-none disabled:opacity-50"
         />
 
@@ -431,7 +429,7 @@ export function Composer({
               : "Voice input"
           }
           type="button"
-          disabled={false}
+          disabled={disabled}
         >
           <MicIcon
             width={17}
@@ -439,7 +437,7 @@ export function Composer({
           />
         </button>
 
-        {isGenerating && (
+        {disabled ? (
           <button
             onClick={onStop}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity hover:opacity-80"
@@ -448,20 +446,20 @@ export function Composer({
           >
             <span className="h-3.5 w-3.5 rounded-[3px] bg-bg" />
           </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={!value.trim() && selectedFiles.length === 0}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-gradient text-white disabled:opacity-40"
+            aria-label="Send"
+            type="button"
+          >
+            <SendIcon
+              width={16}
+              height={16}
+            />
+          </button>
         )}
-
-        <button
-          onClick={handleSend}
-          disabled={!value.trim() && selectedFiles.length === 0}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-gradient text-white disabled:opacity-40"
-          aria-label="Send"
-          type="button"
-        >
-          <SendIcon
-            width={16}
-            height={16}
-          />
-        </button>
       </div>
     </div>
   );
