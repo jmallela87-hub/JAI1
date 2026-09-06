@@ -30,13 +30,6 @@ export async function getWorkspaceData() {
     supabase.from("preferences").select("*").eq("user_id", user.id).single(),
   ]);
 
-  console.log("[JAI workspace]", {
-    userId: user.id,
-    email: user.email,
-    profile,
-    profileError,
-  });
-
   return {
     profile: profile as Profile,
     chats: (chats ?? []) as Chat[],

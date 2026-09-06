@@ -37,7 +37,7 @@ export function Workspace({
   const [memories, setMemories] = useState(initialMemories);
   const [preferences, setPreferences] = useState(initialPreferences);
 
-  const [sidebarExpanded, setSidebarExpanded] = useState(true);
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -457,6 +457,7 @@ export function Workspace({
   async function handleNewChat() {
     setActiveChatId(null);
     setMobileSidebarOpen(false);
+    setSidebarExpanded(false);
   }
 
   async function handleDeleteChat(id: string) {
@@ -613,27 +614,32 @@ export function Workspace({
         />
       )}
 
-      <div className="hidden md:block">
-        <Sidebar
-          expanded={sidebarExpanded}
-          onCollapse={() =>
-            setSidebarExpanded(false)
-          }
-          onExpand={() =>
-            setSidebarExpanded(true)
-          }
-          chats={chats}
-          activeChatId={activeChatId}
-          onSelectChat={setActiveChatId}
-          onNewChat={handleNewChat}
-          onDeleteChat={handleDeleteChat}
-          profile={profile}
-          onOpenProfileMenu={() =>
-            setProfileOverlayOpen(true)
-          }
-          isMobileOverlay={false}
-        />
-      </div>
+      {sidebarExpanded && (
+        <div className="hidden md:block">
+          <Sidebar
+            expanded
+            onCollapse={() =>
+              setSidebarExpanded(false)
+            }
+            onExpand={() =>
+              setSidebarExpanded(true)
+            }
+            chats={chats}
+            activeChatId={activeChatId}
+            onSelectChat={(id) => {
+              setActiveChatId(id);
+              setSidebarExpanded(false);
+            }}
+            onNewChat={handleNewChat}
+            onDeleteChat={handleDeleteChat}
+            profile={profile}
+            onOpenProfileMenu={() =>
+              setProfileOverlayOpen(true)
+            }
+            isMobileOverlay={false}
+          />
+        </div>
+      )}
 
       {mobileSidebarOpen && (
         <div className="md:hidden">
@@ -663,6 +669,7 @@ export function Workspace({
       <div className="relative flex-1">
         {!sidebarExpanded && (
           <button
+            type="button"
             onClick={() => {
               if (window.innerWidth < 768) {
                 setMobileSidebarOpen(true);
@@ -670,22 +677,13 @@ export function Workspace({
                 setSidebarExpanded(true);
               }
             }}
-            className="absolute left-3 top-3 z-10 hidden text-sm font-medium text-text-muted hover:text-text md:block"
+            className="absolute left-4 top-4 z-10 text-lg font-semibold tracking-tight text-text"
             aria-label="Open sidebar"
           >
-            ☰
+            JAI
           </button>
         )}
 
-        <button
-          onClick={() =>
-            setMobileSidebarOpen(true)
-          }
-          className="absolute left-4 top-4 z-10 text-lg font-semibold text-text md:hidden"
-          aria-label="Open sidebar"
-        >
-          JAI
-        </button>
 
         <ChatView
           messages={messages}

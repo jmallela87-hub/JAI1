@@ -1,9 +1,14 @@
 "use client";
 
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { Message } from "@/lib/types";
 import { Composer } from "@/components/Composer";
 import { cn } from "@/lib/utils";
+
 
 interface ChatViewProps {
   messages: Message[];
@@ -56,9 +61,9 @@ export function ChatView({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex-1 overflow-y-auto px-4 py-8 sm:px-0">
-        <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-8 sm:px-0">
+        <div className="mx-auto flex min-w-0 max-w-2xl flex-col gap-6">
           {messages.map((message) => (
             <MessageBubble key={message.id} message={message} />
           ))}
@@ -82,7 +87,7 @@ export function ChatView({
           <div ref={bottomRef} />
         </div>
       </div>
-      <div className="mx-auto w-full max-w-2xl px-4 pb-6 sm:px-0">
+      <div className="mx-auto w-full min-w-0 max-w-2xl px-4 pb-6 sm:px-0">
         <Composer
           onSend={onSend}
           onStop={onStop}
@@ -94,8 +99,50 @@ export function ChatView({
   );
 }
 
-function downloadJAIFile(name: string, content: string) { const blob = new Blob([content], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+async function downloadJAIFile(name: string, content: string) {
+  try {
+    const safeName = name
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .replace(/\\.{2,}/g, ".")
+      .slice(0, 180);
 
+    if (!safeName || !content) return;
+
+    const response = await fetch("/api/files", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fileName: safeName,
+        content,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`File download failed (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = safeName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
+  } catch (error) {
+    console.error("[FILE DOWNLOAD] Error:", error);
+  }
+}
 const MessageBubble = memo(function MessageBubble({ message }: { message: Message }) {
   const [copied, setCopied] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<{ name: string; type: string; data: string } | null>(null);
@@ -171,11 +218,163 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
       {displayContent && (
         <div
           className={cn(
-            "mt-2 max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+            "mt-2 min-w-0 max-w-[85%] overflow-hidden rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
             isUser ? "bg-accent-gradient text-white" : "bg-surface text-text"
           )}
         >
-          {displayContent}
+          <div className="min-w-0 break-words">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({ children }) => (
+                  <h1 className="mb-4 mt-2 text-xl font-semibold leading-tight">
+                    {children}
+                  </h1>
+                ),
+                h2: ({ children }) => (
+                  <h2 className="mb-3 mt-5 text-lg font-semibold leading-tight">
+                    {children}
+                  </h2>
+                ),
+                h3: ({ children }) => (
+                  <h3 className="mb-2 mt-4 text-base font-semibold leading-tight">
+                    {children}
+                  </h3>
+                ),
+                p: ({ children }) => (
+                  <p className="mb-3 last:mb-0">
+                    {children}
+                  </p>
+                ),
+                ul: ({ children }) => (
+                  <ul className="mb-3 list-disc space-y-1 pl-5 last:mb-0">
+                    {children}
+                  </ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="mb-3 list-decimal space-y-1 pl-5 last:mb-0">
+                    {children}
+                  </ol>
+                ),
+                li: ({ children }) => (
+                  <li className="break-words">
+                    {children}
+                  </li>
+                ),
+                blockquote: ({ children }) => (
+                  <blockquote className="my-3 border-l-2 border-border pl-4 text-text-muted">
+                    {children}
+                  </blockquote>
+                ),
+                hr: () => (
+                  <hr className="my-5 border-border" />
+                ),
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="break-all underline underline-offset-2 hover:opacity-80"
+                  >
+                    {children}
+                  </a>
+                ),
+                table: ({ children }) => (
+                  <div className="my-4 min-w-0 max-w-full overflow-x-auto rounded-xl border border-border">
+                    <table className="w-max min-w-full border-collapse text-sm">
+                      {children}
+                    </table>
+                  </div>
+                ),
+                thead: ({ children }) => (
+                  <thead className="bg-white/5">
+                    {children}
+                  </thead>
+                ),
+                tbody: ({ children }) => (
+                  <tbody>
+                    {children}
+                  </tbody>
+                ),
+                tr: ({ children }) => (
+                  <tr className="border-b border-border last:border-b-0">
+                    {children}
+                  </tr>
+                ),
+                th: ({ children }) => (
+                  <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">
+                    {children}
+                  </th>
+                ),
+                td: ({ children }) => (
+                  <td className="px-3 py-2 align-top">
+                    {children}
+                  </td>
+                ),
+                code: ({ className, children, ...props }) => {
+                  const content = String(children);
+                  const languageMatch = /language-([\w-]+)/.exec(className || "");
+                  const language = languageMatch?.[1]?.toLowerCase();
+
+                  const isBlock =
+                    Boolean(languageMatch) ||
+                    content.includes("\n");
+
+                  if (isBlock) {
+                    return (
+                      <SyntaxHighlighter
+                        language={language || "text"}
+                        style={oneDark}
+                        PreTag="div"
+                        customStyle={{
+                          margin: 0,
+                          padding: "16px",
+                          borderRadius: "12px",
+                          fontSize: "13px",
+                          lineHeight: "1.6",
+                          overflowX: "auto",
+                          background: "#0d1117",
+                          color: "#e6edf3",
+                        }}
+                        codeTagProps={{
+                          style: {
+                            display: "block",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                            color: "#e6edf3",
+                          },
+                        }}
+                        wrapLongLines={false}
+                      >
+                        {content.replace(/\n$/, "")}
+                      </SyntaxHighlighter>
+                    );
+                  }
+
+                  return (
+                    <code
+                      className="rounded-md bg-black/20 px-1.5 py-0.5 font-mono text-[0.9em]"
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  );
+                },
+                strong: ({ children }) => (
+                  <strong className="font-semibold">
+                    {children}
+                  </strong>
+                ),
+                del: ({ children }) => (
+                  <del className="opacity-70">
+                    {children}
+                  </del>
+                ),
+              }}
+            >
+              {displayContent}
+            </ReactMarkdown>
+          </div>
         </div>
       )}
 

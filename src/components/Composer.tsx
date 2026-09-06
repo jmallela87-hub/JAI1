@@ -73,6 +73,7 @@ export function Composer({
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] =
     useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const fileInputRef =
     useRef<HTMLInputElement>(null);
@@ -168,6 +169,81 @@ export function Composer({
     ]);
 
     e.target.value = "";
+  }
+
+  function addDroppedFiles(files: File[]) {
+    if (files.length === 0) return;
+
+    const maxSize = 15 * 1024 * 1024;
+
+    const oversizedFile = files.find(
+      (file) => file.size > maxSize
+    );
+
+    if (oversizedFile) {
+      setVoiceError(
+        `"${oversizedFile.name}" is too large. Maximum size is 15 MB per file.`
+      );
+      return;
+    }
+
+    setVoiceError(null);
+
+    setSelectedFiles((prev) => [
+      ...prev,
+      ...files,
+    ]);
+  }
+
+  function handleDragEnter(
+    e: React.DragEvent<HTMLDivElement>
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  }
+
+  function handleDragOver(
+    e: React.DragEvent<HTMLDivElement>
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.dataTransfer.types.includes("Files")) {
+      e.dataTransfer.dropEffect = "copy";
+      setIsDragging(true);
+    }
+  }
+
+  function handleDragLeave(
+    e: React.DragEvent<HTMLDivElement>
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false);
+    }
+  }
+
+  function handleDrop(
+    e: React.DragEvent<HTMLDivElement>
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setIsDragging(false);
+
+    const files = Array.from(
+      e.dataTransfer.files ?? []
+    );
+
+    if (files.length > 0) {
+      addDroppedFiles(files);
+    }
   }
 
   function toggleVoice() {
@@ -377,7 +453,21 @@ export function Composer({
         </div>
       )}
 
-      <div className="flex w-full items-end gap-2 rounded-2xl border border-border bg-surface px-3 py-2.5 shadow-lg shadow-black/20">
+      <div
+        className={`flex w-full items-end gap-2 rounded-2xl border border-border bg-surface px-3 py-2.5 shadow-lg shadow-black/20 transition ${
+          isDragging ? "ring-2 ring-accent/50" : ""
+        }`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {isDragging && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-surface/95 text-sm font-medium text-text">
+            Drop files here
+          </div>
+        )}
+
         <button
           onClick={() =>
             fileInputRef.current?.click()

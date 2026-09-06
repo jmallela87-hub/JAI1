@@ -17,14 +17,6 @@ type ProviderResult = {
 const GEMINI_COOLDOWN_MS = 60_000;
 let geminiCooldownUntil = 0;
 
-function isGeminiCoolingDown() {
-  return Date.now() < geminiCooldownUntil;
-}
-
-function startGeminiCooldown() {
-  geminiCooldownUntil = Date.now() + GEMINI_COOLDOWN_MS;
-}
-
 function dataUrlToBase64(dataUrl: string) {
   const commaIndex = dataUrl.indexOf(",");
 
@@ -43,136 +35,12 @@ function isPdf(type: string) {
   return type === "application/pdf";
 }
 
-async function callGemini(
-  messages: AIMessage[],
-  attachments?: AIAttachment[]
-): Promise<ProviderResult> {
-  const apiKey =
-    process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error(
-      "Gemini API key is not configured"
-    );
-  }
-
-  const system =
-    messages.find(
-      (m) => m.role === "system"
-    )?.content ?? "";
-
-  const normalMessages = messages.filter(
-    (m) => m.role !== "system"
-  );
-
-  const contents = normalMessages.map(
-    (m, index) => {
-      const isLast =
-        index === normalMessages.length - 1;
-
-      const parts: Array<
-        | { text: string }
-        | {
-            inlineData: {
-              mimeType: string;
-              data: string;
-            };
-          }
-      > = [
-        {
-          text: m.content,
-        },
-      ];
-
-      if (isLast && attachments?.length) {
-        for (const attachment of attachments) {
-          if (
-            isImage(attachment.type) ||
-            isPdf(attachment.type)
-          ) {
-            parts.push({
-              inlineData: {
-                mimeType: attachment.type,
-                data: dataUrlToBase64(
-                  attachment.data
-                ),
-              },
-            });
-          }
-        }
-      }
-
-      return {
-        role:
-          m.role === "assistant"
-            ? "model"
-            : "user",
-        parts,
-      };
-    }
-  );
-
-  const response = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        ...(system
-          ? {
-              systemInstruction: {
-                parts: [{ text: system }],
-              },
-            }
-          : {}),
-        contents,
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const errorText =
-      await response.text();
-
-    throw new Error(
-      `Gemini request failed: ${response.status} ${errorText.slice(
-        0,
-        300
-      )}`
-    );
-  }
-
-  const data = await response.json();
-
-  const text =
-    data?.candidates?.[0]?.content?.parts
-      ?.map(
-        (part: { text?: string }) =>
-          part.text ?? ""
-      )
-      .join("") ?? "";
-
-  if (!text) {
-    throw new Error(
-      "Gemini returned an empty response"
-    );
-  }
-
-  return {
-    text,
-    provider: "gemini",
-  };
-}
-
 async function callOpenRouter(
   messages: AIMessage[],
-  attachments?: AIAttachment[]
+  attachments?: AIAttachment[],
+  apiKey = process.env.OPENROUTER_API_KEY,
+  model = "@preset/jai-free"
 ): Promise<ProviderResult> {
-  const apiKey =
-    process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
     throw new Error(
@@ -233,15 +101,7 @@ async function callOpenRouter(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        models: [
-          "z-ai/glm-5.3-flash",
-          "openai/gpt-5.6-luna",
-          "deepseek/deepseek-v4-flash",
-        ],
-        provider: {
-          sort: "latency",
-          allow_fallbacks: true,
-        },
+        model,
         messages: openRouterMessages,
         ...(attachments?.some((attachment) => isPdf(attachment.type))
           ? {
@@ -298,163 +158,13 @@ export async function generateAIResponseStream(
   attachments?: AIAttachment[],
   signal?: AbortSignal
 ): Promise<{
-  provider: "gemini" | "openrouter";
+  provider: "openrouter";
   fallbackUsed: boolean;
 }> {
-  async function streamGemini() {
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("Gemini API key is not configured");
-    }
-
-    const system =
-      messages.find((m) => m.role === "system")?.content ?? "";
-
-    const normalMessages = messages.filter(
-      (m) => m.role !== "system"
-    );
-
-    const contents = normalMessages.map((m, index) => {
-      const isLast = index === normalMessages.length - 1;
-
-      const parts: Array<
-        | { text: string }
-        | {
-            inlineData: {
-              mimeType: string;
-              data: string;
-            };
-          }
-      > = [{ text: m.content }];
-
-      if (isLast && attachments?.length) {
-        for (const attachment of attachments) {
-          if (
-            isImage(attachment.type) ||
-            isPdf(attachment.type)
-          ) {
-            parts.push({
-              inlineData: {
-                mimeType: attachment.type,
-                data: dataUrlToBase64(attachment.data),
-              },
-            });
-          }
-        }
-      }
-
-      return {
-        role: m.role === "assistant" ? "model" : "user",
-        parts,
-      };
-    });
-
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        signal: signal
-          ? AbortSignal.any([
-              signal,
-              AbortSignal.timeout(
-                attachments?.some((attachment) => isPdf(attachment.type))
-                  ? 15000
-                  : attachments?.some((attachment) => isImage(attachment.type))
-                    ? 8000
-                    : 4000
-              ),
-            ])
-          : AbortSignal.timeout(
-              attachments?.some((attachment) => isPdf(attachment.type))
-                ? 15000
-                : attachments?.some((attachment) => isImage(attachment.type))
-                  ? 8000
-                  : 4000
-            ),
-        body: JSON.stringify({
-          ...(system
-            ? {
-                systemInstruction: {
-                  parts: [{ text: system }],
-                },
-              }
-            : {}),
-          contents,
-          generationConfig: {
-            temperature: 0.65,
-            topP: 0.9,
-            maxOutputTokens: 4096,
-          },
-        }),
-      }
-    );
-
-    if (!response.ok || !response.body) {
-      const errorText = await response.text();
-
-      throw new Error(
-        `Gemini streaming failed: ${response.status} ${errorText.slice(
-          0,
-          300
-        )}`
-      );
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) {
-        buffer += decoder.decode();
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-      const events = buffer.split("\n\n");
-      buffer = events.pop() ?? "";
-
-      for (const event of events) {
-        const dataLine = event
-          .split("\n")
-          .find((line) => line.startsWith("data:"));
-
-        if (!dataLine) continue;
-
-        const jsonText = dataLine.slice(5).trim();
-
-        if (!jsonText || jsonText === "[DONE]") continue;
-
-        try {
-          const data = JSON.parse(jsonText);
-
-          const text =
-            data?.candidates?.[0]?.content?.parts
-              ?.map((part: { text?: string }) => part.text ?? "")
-              .join("") ?? "";
-
-          if (text) onChunk(text);
-        } catch {
-          // Ignore incomplete SSE chunks.
-        }
-      }
-    }
-
-    return "gemini" as const;
-  }
-
-  async function streamOpenRouter() {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-
+  async function streamOpenRouter(
+    apiKey: string | undefined,
+    model: string
+  ) {
     if (!apiKey) {
       throw new Error("OpenRouter API key is not configured");
     }
@@ -498,141 +208,126 @@ export async function generateAIResponseStream(
       };
     });
 
-    const models = [
-      "z-ai/glm-5.3-flash",
-      "openai/gpt-5.6-luna",
-      "deepseek/deepseek-v4-flash",
-    ];
+    try {
+      console.log(`[OpenRouter] Trying model: ${model}`);
 
-    let lastError: Error | null = null;
+      // Do not impose a total generation timeout.
+      // Large/complex answers may legitimately take longer than 7 seconds.
+      // User cancellation still aborts the request immediately.
+      const requestSignal = signal;
 
-    for (const model of models) {
-      try {
-        console.log(`[OpenRouter] Trying model: ${model}`);
-
-        const requestSignal = signal
-          ? AbortSignal.any([
-              signal,
-              AbortSignal.timeout(7000),
-            ])
-          : AbortSignal.timeout(7000);
-
-        const response = await fetch(
-          "https://openrouter.ai/api/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
-            signal: requestSignal,
-            body: JSON.stringify({
-              model,
-              messages: openRouterMessages,
-              stream: true,
-              temperature: 0.2,
-              max_tokens: 8192,
-              ...(attachments?.some((attachment) =>
-                isPdf(attachment.type)
-              )
-                ? {
-                    plugins: [
-                      {
-                        id: "file-parser",
-                        pdf: {
-                          engine: "cloudflare-ai",
-                        },
+      const response = await fetch(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          signal: requestSignal,
+          body: JSON.stringify({
+            model,
+            messages: openRouterMessages,
+            stream: true,
+            temperature: 0.2,
+            max_tokens: 8192,
+            ...(attachments?.some((attachment) =>
+              isPdf(attachment.type)
+            )
+              ? {
+                  plugins: [
+                    {
+                      id: "file-parser",
+                      pdf: {
+                        engine: "cloudflare-ai",
                       },
-                    ],
-                  }
-                : {}),
-            }),
-          }
-        );
-
-        if (!response.ok || !response.body) {
-          const errorText = await response.text();
-
-          throw new Error(
-            `OpenRouter ${model} failed: ${response.status} ${errorText.slice(
-              0,
-              500
-            )}`
-          );
+                    },
+                  ],
+                }
+              : {}),
+          }),
         }
+      );
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
+      if (!response.ok || !response.body) {
+        const errorText = await response.text();
 
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) break;
-
-          buffer += decoder
-            .decode(value, { stream: true })
-            .replace(/\r\n/g, "\n")
-            .replace(/\r/g, "\n");
-
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data:")) continue;
-
-            const jsonText = line.slice(5).trim();
-
-            if (!jsonText || jsonText === "[DONE]") {
-              continue;
-            }
-
-            try {
-              const data = JSON.parse(jsonText);
-
-              const text =
-                data?.choices?.[0]?.delta?.content ?? "";
-
-              if (text) {
-                onChunk(text);
-              }
-            } catch {
-              // Ignore malformed/incomplete SSE chunks.
-            }
-          }
-        }
-
-        console.log(`[OpenRouter] Success: ${model}`);
-
-        return "openrouter" as const;
-      } catch (error) {
-        if (signal?.aborted) {
-          throw error;
-        }
-
-        lastError =
-          error instanceof Error
-            ? error
-            : new Error(String(error));
-
-        console.error(
-          `[OpenRouter] ${model} failed:`,
-          lastError.message
+        throw new Error(
+          `OpenRouter ${model} failed: ${response.status} ${errorText.slice(
+            0,
+            500
+          )}`
         );
       }
-    }
 
-    throw (
-      lastError ??
-      new Error("All OpenRouter models are unavailable")
-    );
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          buffer += decoder.decode();
+          break;
+        }
+
+        buffer += decoder
+          .decode(value, { stream: true })
+          .replace(/\r\n/g, "\n")
+          .replace(/\r/g, "\n");
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+
+          const jsonText = line.slice(5).trim();
+
+          if (!jsonText || jsonText === "[DONE]") {
+            continue;
+          }
+
+          try {
+            const data = JSON.parse(jsonText);
+
+            const text =
+              data?.choices?.[0]?.delta?.content ?? "";
+
+            if (text) {
+              onChunk(text);
+            }
+          } catch {
+            // Ignore malformed/incomplete SSE chunks.
+          }
+        }
+      }
+
+      console.log(`[OpenRouter] Success: ${model}`);
+
+      return "openrouter" as const;
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+
+      console.error(
+        `[OpenRouter] ${model} failed:`,
+        error instanceof Error ? error.message : error
+      );
+
+      throw error;
+    }
   }
 
-  // PRIMARY: Always try Gemini first.
-  // Only fall back to OpenRouter when Gemini actually fails.
+  // PRIMARY: OpenRouter account #1 / MiniMax M3
   try {
-    const provider = await streamGemini();
+    const provider = await streamOpenRouter(
+      process.env.OPENROUTER_API_KEY,
+      "@preset/jai-free"
+    );
 
     return {
       provider,
@@ -643,12 +338,18 @@ export async function generateAIResponseStream(
       throw error;
     }
 
-    console.error("Gemini streaming failed. Falling back to OpenRouter:", error);
+    console.error(
+      "[OpenRouter] Primary failed. Trying secondary:",
+      error
+    );
   }
 
-  // FALLBACK: OpenRouter is used only after Gemini fails.
+  // SECONDARY: OpenRouter account #2 / NVIDIA Nemotron
   try {
-    const provider = await streamOpenRouter();
+    const provider = await streamOpenRouter(
+      process.env.OPENROUTER_API_KEY_2,
+      "@preset/jai-nvidia-free"
+    );
 
     return {
       provider,
@@ -659,10 +360,15 @@ export async function generateAIResponseStream(
       throw error;
     }
 
-    console.error("OpenRouter streaming failed:", error);
-  }
+    console.error(
+      "[OpenRouter] Secondary failed:",
+      error
+    );
 
-  throw new Error("All configured AI providers are unavailable");
+    throw new Error(
+      "All configured OpenRouter providers are unavailable"
+    );
+  }
 }
 
 export async function generateAIResponse(
@@ -673,43 +379,47 @@ export async function generateAIResponse(
     fallbackUsed: boolean;
   }
 > {
+  // PRIMARY: OpenRouter account #1 / MiniMax M3
   try {
-    const result =
-      await callGemini(
-        messages,
-        attachments
-      );
+    const result = await callOpenRouter(
+      messages,
+      attachments,
+      process.env.OPENROUTER_API_KEY,
+      "@preset/jai-free"
+    );
 
     return {
       ...result,
       fallbackUsed: false,
     };
-  } catch (geminiError) {
+  } catch (primaryError) {
     console.error(
-      "Gemini failed:",
-      geminiError
+      "[OpenRouter] Primary failed. Trying secondary:",
+      primaryError
     );
   }
 
+  // SECONDARY: OpenRouter account #2 / NVIDIA Nemotron
   try {
-    const result =
-      await callOpenRouter(
-        messages,
-        attachments
-      );
+    const result = await callOpenRouter(
+      messages,
+      attachments,
+      process.env.OPENROUTER_API_KEY_2,
+      "@preset/jai-nvidia-free"
+    );
 
     return {
       ...result,
       fallbackUsed: true,
     };
-  } catch (openRouterError) {
+  } catch (secondaryError) {
     console.error(
-      "OpenRouter failed:",
-      openRouterError
+      "[OpenRouter] Secondary failed:",
+      secondaryError
+    );
+
+    throw new Error(
+      "All configured OpenRouter providers are unavailable"
     );
   }
-
-  throw new Error(
-    "All configured AI providers are unavailable"
-  );
 }
